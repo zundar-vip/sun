@@ -4,7 +4,7 @@ const fs = require('fs');
 const path = require('path');
 
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT =s.env.PORT || 3001;
 const HISTORY_FILE = path.join('/tmp', 'data.json');
 const MAX_HISTORY = 100;
 
