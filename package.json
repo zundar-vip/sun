@@ -1,0 +1,13 @@
+{
+  "name": "sunwin-api",
+  "version": "1.0.0",
+  "description": "Sun.Win API Worm GPT",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "dependencies": {
+    "ws": "^8.16.0",
+    "express": "^4.18.2"
+  }
+}
