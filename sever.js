@@ -5,8 +5,13 @@ const path = require('path');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const HISTORY_FILE = path.join('/tmp', 'data.json');
+const DATA_DIR = '/data';
+const HISTORY_FILE = path.join(DATA_DIR, 'data.json');
 const MAX_HISTORY = 100;
+
+if (!fs.existsSync(DATA_DIR)) {
+    fs.mkdirSync(DATA_DIR, { recursive: true });
+}
 
 let apiResponseData = [];
 let patternHistory = [];
@@ -25,9 +30,13 @@ function loadHistory() {
                 patternHistory.forEach(entry => {
                     if (entry.Phien) processedSessions.add(entry.Phien);
                 });
+                console.log(`📂 LOADED ${patternHistory.length} RECORDS FROM DISK`);
             }
+        } else {
+            console.log('📂 NO EXISTING DATA, STARTING FRESH');
         }
     } catch (err) {
+        console.error('❌ LOAD ERROR:', err.message);
         patternHistory = [];
         apiResponseData = [];
     }
@@ -35,9 +44,14 @@ function loadHistory() {
 
 function saveHistory() {
     try {
+        if (!fs.existsSync(DATA_DIR)) {
+            fs.mkdirSync(DATA_DIR, { recursive: true });
+        }
         const toSave = patternHistory.slice(0, MAX_HISTORY).reverse();
         fs.writeFileSync(HISTORY_FILE, JSON.stringify(toSave, null, 2), 'utf8');
-    } catch (err) {}
+    } catch (err) {
+        console.error('❌ SAVE ERROR:', err.message);
+    }
 }
 
 function addNewEntry(entry) {
@@ -57,12 +71,12 @@ function addNewEntry(entry) {
     
     if (processedSessions.size > MAX_HISTORY * 2) {
         const entries = [...processedSessions].slice(-MAX_HISTORY);
-        processedSessions = new Set(entries);
+        processedSessions.clear();
+        entries.forEach(e => processedSessions.add(e));
     }
     
     apiResponseData = patternHistory;
     saveHistory();
-    console.log(`🎲 ${entry.Xuc_xac_1}-${entry.Xuc_xac_2}-${entry.Xuc_xac_3} = ${entry.Tong} (${entry.Ket_qua}) | Phiên: ${entry.Phien} | Total: ${patternHistory.length}`);
     return true;
 }
 
@@ -85,7 +99,6 @@ function createConnection() {
     }
 
     function forceReconnect() {
-        console.log(`[CONN #${connId}] FORCE RECONNECT!`);
         clearAllTimers();
         if (ws) {
             try {
@@ -120,7 +133,6 @@ function createConnection() {
         });
 
         ws.on('open', () => {
-            console.log(`[CONN #${connId}] OPEN`);
             activeConnections.set(connId, { ws, lastMessageTime });
             lastMessageTime = Date.now();
             
@@ -152,12 +164,10 @@ function createConnection() {
                 const timeSinceLastMsg = now - lastMessageTime;
                 
                 if (timeSinceLastMsg > 45000) {
-                    console.log(`[CONN #${connId}] NO DATA ${Math.floor(timeSinceLastMsg/1000)}s - RECONNECT!`);
                     forceReconnect();
                 }
                 
                 if (ws && ws.readyState !== WebSocket.OPEN) {
-                    console.log(`[CONN #${connId}] NOT OPEN - RECONNECT!`);
                     forceReconnect();
                 }
             }, 8000);
@@ -196,19 +206,13 @@ function createConnection() {
                         "timestamp": new Date().toISOString()
                     };
                     
-                    if (addNewEntry(newEntry)) {
-                        console.log(`✅ [CONN #${connId}] PHIÊN ${currentSessionId} ADDED!`);
-                    } else {
-                        console.log(`⏭️ [CONN #${connId}] PHIÊN ${currentSessionId} DUPLICATE - SKIPPED!`);
-                    }
-                    
+                    addNewEntry(newEntry);
                     currentSessionId = null;
                 }
             } catch (e) {}
         });
 
         ws.on('close', (code) => {
-            console.log(`[CONN #${connId}] CLOSED: ${code}`);
             activeConnections.delete(connId);
             clearAllTimers();
             reconnectTimeout = setTimeout(() => {
@@ -216,8 +220,7 @@ function createConnection() {
             }, 500 + Math.random() * 1000);
         });
 
-        ws.on('error', (err) => {
-            console.error(`[CONN #${connId}] ERROR: ${err.message}`);
+        ws.on('error', () => {
             activeConnections.delete(connId);
         });
     }
@@ -236,5 +239,5 @@ createConnection();
 createConnection();
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SERVER PORT: ${PORT} | 3 CONNECTIONS | HISTORY: ${patternHistory.length}`);
+    console.log(`🚀 PORT: ${PORT} | DISK: ${DATA_DIR} | DATA: ${patternHistory.length}`);
 });
