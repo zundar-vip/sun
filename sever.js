@@ -17,6 +17,8 @@ let pingInterval = null;
 let reconnectTimeout = null;
 let initTimeout = null;
 let connectionCount = 0;
+let lastMessageTime = Date.now();
+let healthCheckInterval = null;
 
 function loadHistory() {
     try {
@@ -44,6 +46,20 @@ function clearAllTimers() {
     clearInterval(pingInterval);
     clearTimeout(reconnectTimeout);
     clearTimeout(initTimeout);
+    clearInterval(healthCheckInterval);
+}
+
+function forceReconnect() {
+    console.log('FORCE RECONNECT - NO DATA RECEIVED!');
+    clearAllTimers();
+    if (ws) {
+        try {
+            ws.removeAllListeners();
+            ws.terminate();
+        } catch(e) {}
+    }
+    wsConnected = false;
+    connectWebSocket();
 }
 
 function connectWebSocket() {
@@ -57,18 +73,22 @@ function connectWebSocket() {
     }
     
     connectionCount++;
-    console.log(`[${connectionCount}] Connecting to Sun.Win...`);
+    lastMessageTime = Date.now();
+    console.log(`[CONNECT #${connectionCount}] Connecting to Sun.Win...`);
     
     ws = new WebSocket("wss://websocket.azhkthg1.net/websocket?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhbW91bnQiOjAsInVzZXJuYW1lIjoiU0NfYXBpc3Vud2luMTIzIn0.hgrRbSV6vnBwJMg9ZFtbx3rRu9mX_hZMZ_m5gMNhkw0", {
         headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Origin": "https://play.sun.win"
-        }
+        },
+        handshakeTimeout: 10000,
+        maxPayload: 104857600
     });
 
     ws.on('open', () => {
-        console.log(`[${connectionCount}] Connected!`);
+        console.log(`[CONNECT #${connectionCount}] OPENED!`);
         wsConnected = true;
+        lastMessageTime = Date.now();
         
         const initMsgs = [
             [1, "MiniGame", "GM_apivopnhaan", "WangLin", {
@@ -83,26 +103,40 @@ function connectWebSocket() {
             initTimeout = setTimeout(() => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify(msg));
-                    console.log(`[${connectionCount}] Sent init msg ${i+1}`);
                 }
-            }, i * 1000);
+            }, i * 800);
         });
 
         pingInterval = setInterval(() => {
             if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.ping();
-                console.log(`[${connectionCount}] Ping sent`);
             }
-        }, 30000);
+        }, 15000);
+
+        healthCheckInterval = setInterval(() => {
+            const now = Date.now();
+            const timeSinceLastMsg = now - lastMessageTime;
+            
+            if (timeSinceLastMsg > 60000) {
+                console.log(`NO DATA FOR ${Math.floor(timeSinceLastMsg/1000)}s - FORCE RECONNECT!`);
+                forceReconnect();
+            }
+            
+            if (ws && ws.readyState !== WebSocket.OPEN) {
+                console.log('WS NOT OPEN - RECONNECTING...');
+                forceReconnect();
+            }
+        }, 10000);
     });
 
     ws.on('pong', () => {
+        lastMessageTime = Date.now();
         wsConnected = true;
-        console.log(`[${connectionCount}] Pong received`);
     });
 
     ws.on('message', (message) => {
         try {
+            lastMessageTime = Date.now();
             wsConnected = true;
             
             const data = JSON.parse(message);
@@ -112,7 +146,6 @@ function connectWebSocket() {
 
             if (cmd === 1008 && sid) {
                 currentSessionId = sid;
-                console.log(`[${connectionCount}] Session: ${sid}`);
             }
             
             if (cmd === 1003 && gBB && d1 && d2 && d3) {
@@ -137,28 +170,26 @@ function connectWebSocket() {
                 
                 apiResponseData = patternHistory;
                 saveHistory();
-                console.log(`[${connectionCount}] ${d1}-${d2}-${d3} = ${total} (${result}) | Total: ${patternHistory.length}`);
+                console.log(`🎲 ${d1}-${d2}-${d3} = ${total} (${result}) | Phiên: ${currentSessionId} | Total: ${patternHistory.length}`);
                 currentSessionId = null;
             }
-        } catch (e) {
-            console.error(`[${connectionCount}] Parse error:`, e.message);
-        }
+        } catch (e) {}
     });
 
     ws.on('close', (code, reason) => {
-        console.log(`[${connectionCount}] Closed: ${code} - ${reason}`);
+        console.log(`CLOSED: ${code}`);
         wsConnected = false;
         clearAllTimers();
-        reconnectTimeout = setTimeout(connectWebSocket, 3000);
+        reconnectTimeout = setTimeout(connectWebSocket, 1000);
     });
 
     ws.on('error', (err) => {
-        console.error(`[${connectionCount}] Error:`, err.message);
+        console.error(`ERROR: ${err.message}`);
         wsConnected = false;
     });
 }
 
-app.get('/sun', (req, res) => {
+app.get('/api/ditmemaysun', (req, res) => {
     res.json(apiResponseData);
 });
 
@@ -166,5 +197,5 @@ loadHistory();
 connectWebSocket();
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT} | Loaded ${patternHistory.length} records`);
+    console.log(`SERVER PORT: ${PORT} | HISTORY: ${patternHistory.length}`);
 });
