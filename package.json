@@ -1,13 +1,14 @@
 {
-  "name": "sunwin-api",
+  "name": "sunwinba",
   "version": "1.0.0",
-  "description": "Sun.Win API Worm GPT",
-  "main": "server.js",
+  "description": "SunWin API WebSocket",
+  "main": "index.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node sever.js"
   },
   "dependencies": {
     "ws": "^8.16.0",
-    "express": "^4.18.2"
+    "express": "^4.18.2",
+    "cors": "^2.8.5"
   }
 }
