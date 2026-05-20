@@ -18,6 +18,7 @@ let patternHistory = [];
 const activeConnections = new Map();
 const processedSessions = new Set();
 let connIdCounter = 0;
+const WS_COUNT = 5;
 
 function loadHistory() {
     try {
@@ -77,10 +78,11 @@ function addNewEntry(entry) {
     
     apiResponseData = patternHistory;
     saveHistory();
+    console.log(`✅ PHIÊN ${entry.Phien}: ${entry.Xuc_xac_1}-${entry.Xuc_xac_2}-${entry.Xuc_xac_3} = ${entry.Tong} (${entry.Ket_qua}) | TOTAL: ${patternHistory.length}`);
     return true;
 }
 
-function createConnection() {
+function createConnection(index) {
     const connId = ++connIdCounter;
     let ws = null;
     let pingInterval = null;
@@ -98,7 +100,8 @@ function createConnection() {
         clearInterval(healthCheckInterval);
     }
 
-    function forceReconnect() {
+    function forceReconnect(reason) {
+        console.log(`[WS#${index}] FORCE RECONNECT: ${reason}`);
         clearAllTimers();
         if (ws) {
             try {
@@ -108,7 +111,8 @@ function createConnection() {
         }
         activeConnections.delete(connId);
         isActive = false;
-        setTimeout(() => createConnection(), 500 + Math.random() * 1500);
+        const delay = 300 + Math.random() * 2000;
+        setTimeout(() => createConnection(index), delay);
     }
 
     function connect() {
@@ -128,12 +132,14 @@ function createConnection() {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
                 "Origin": "https://play.sun.win"
             },
-            handshakeTimeout: 15000,
-            maxPayload: 104857600
+            handshakeTimeout: 10000,
+            maxPayload: 104857600,
+            skipUTF8Validation: true
         });
 
         ws.on('open', () => {
-            activeConnections.set(connId, { ws, lastMessageTime });
+            console.log(`[WS#${index}] CONNECTED`);
+            activeConnections.set(connId, { ws, lastMessageTime, index });
             lastMessageTime = Date.now();
             
             const initMsgs = [
@@ -150,38 +156,38 @@ function createConnection() {
                     if (ws && ws.readyState === WebSocket.OPEN) {
                         ws.send(JSON.stringify(msg));
                     }
-                }, i * 500 + Math.random() * 300);
+                }, i * 400 + Math.random() * 400);
             });
 
             pingInterval = setInterval(() => {
                 if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.ping();
                 }
-            }, 10000 + Math.random() * 5000);
+            }, 8000 + Math.random() * 4000);
 
             healthCheckInterval = setInterval(() => {
                 const now = Date.now();
                 const timeSinceLastMsg = now - lastMessageTime;
                 
-                if (timeSinceLastMsg > 45000) {
-                    forceReconnect();
+                if (timeSinceLastMsg > 35000) {
+                    forceReconnect(`NO DATA ${Math.floor(timeSinceLastMsg/1000)}s`);
                 }
                 
-                if (ws && ws.readyState !== WebSocket.OPEN) {
-                    forceReconnect();
+                if (!ws || ws.readyState !== WebSocket.OPEN) {
+                    forceReconnect('SOCKET NOT OPEN');
                 }
-            }, 8000);
+            }, 6000);
         });
 
         ws.on('pong', () => {
             lastMessageTime = Date.now();
-            activeConnections.set(connId, { ws, lastMessageTime });
+            activeConnections.set(connId, { ws, lastMessageTime, index });
         });
 
         ws.on('message', (message) => {
             try {
                 lastMessageTime = Date.now();
-                activeConnections.set(connId, { ws, lastMessageTime });
+                activeConnections.set(connId, { ws, lastMessageTime, index });
                 
                 const data = JSON.parse(message);
                 if (!Array.isArray(data) || typeof data[1] !== 'object') return;
@@ -190,6 +196,7 @@ function createConnection() {
 
                 if (cmd === 1008 && sid) {
                     currentSessionId = sid;
+                    console.log(`[WS#${index}] SESSION: ${sid}`);
                 }
                 
                 if (cmd === 1003 && gBB && d1 && d2 && d3) {
@@ -206,21 +213,31 @@ function createConnection() {
                         "timestamp": new Date().toISOString()
                     };
                     
-                    addNewEntry(newEntry);
+                    if (addNewEntry(newEntry)) {
+                        console.log(`✅ [WS#${index}] PHIÊN ${currentSessionId} ADDED!`);
+                    } else {
+                        console.log(`⏭️ [WS#${index}] PHIÊN ${currentSessionId} DUPLICATE`);
+                    }
+                    
                     currentSessionId = null;
                 }
-            } catch (e) {}
+            } catch (e) {
+                console.error(`[WS#${index}] PARSE ERROR:`, e.message);
+            }
         });
 
-        ws.on('close', (code) => {
+        ws.on('close', (code, reason) => {
+            console.log(`[WS#${index}] CLOSED: ${code} - ${reason}`);
             activeConnections.delete(connId);
             clearAllTimers();
+            const delay = 200 + Math.random() * 800;
             reconnectTimeout = setTimeout(() => {
                 if (isActive) connect();
-            }, 500 + Math.random() * 1000);
+            }, delay);
         });
 
-        ws.on('error', () => {
+        ws.on('error', (err) => {
+            console.error(`[WS#${index}] ERROR: ${err.message}`);
             activeConnections.delete(connId);
         });
     }
@@ -233,11 +250,25 @@ app.get('/sun', (req, res) => {
     res.json(apiResponseData);
 });
 
+app.get('/health', (req, res) => {
+    const activeCount = activeConnections.size;
+    res.json({
+        status: 'running',
+        ws_connections: activeCount,
+        total_records: patternHistory.length,
+        last_record: patternHistory[0] || null
+    });
+});
+
 loadHistory();
-createConnection();
-createConnection();
-createConnection();
+
+for (let i = 0; i < WS_COUNT; i++) {
+    setTimeout(() => {
+        createConnection(i);
+        console.log(`🚀 STARTED WS#${i}`);
+    }, i * 1200);
+}
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 PORT: ${PORT} | DISK: ${DATA_DIR} | DATA: ${patternHistory.length}`);
+    console.log(`🚀 SERVER PORT: ${PORT} | ${WS_COUNT} CONNECTIONS | DATA: ${patternHistory.length}`);
 });
