@@ -189,7 +189,7 @@ function connectWebSocket() {
     });
 }
 
-app.get('/api/ditmemaysun', (req, res) => {
+app.get('/sun', (req, res) => {
     res.json(apiResponseData);
 });
 
