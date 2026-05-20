@@ -12,9 +12,11 @@ let apiResponseData = [];
 let currentSessionId = null;
 let patternHistory = [];
 let wsConnected = false;
-let lastDataTimestamp = Date.now();
-let dataTimeout = null;
-const DATA_TIMEOUT = 30000;
+let ws = null;
+let pingInterval = null;
+let reconnectTimeout = null;
+let initTimeout = null;
+let connectionCount = 0;
 
 function loadHistory() {
     try {
@@ -22,7 +24,7 @@ function loadHistory() {
             const data = fs.readFileSync(HISTORY_FILE, 'utf8');
             const parsed = JSON.parse(data);
             if (Array.isArray(parsed)) {
-                patternHistory = parsed.slice(-MAX_HISTORY);
+                patternHistory = parsed.slice(-MAX_HISTORY).reverse();
                 apiResponseData = patternHistory;
             }
         }
@@ -34,22 +36,30 @@ function loadHistory() {
 
 function saveHistory() {
     try {
-        fs.writeFileSync(HISTORY_FILE, JSON.stringify(patternHistory, null, 2), 'utf8');
+        fs.writeFileSync(HISTORY_FILE, JSON.stringify(patternHistory.slice().reverse(), null, 2), 'utf8');
     } catch (err) {}
 }
 
-function resetDataTimeout() {
-    lastDataTimestamp = Date.now();
-    clearTimeout(dataTimeout);
-    dataTimeout = setTimeout(() => {
-        if (Date.now() - lastDataTimestamp >= DATA_TIMEOUT) {
-            wsConnected = false;
-        }
-    }, DATA_TIMEOUT);
+function clearAllTimers() {
+    clearInterval(pingInterval);
+    clearTimeout(reconnectTimeout);
+    clearTimeout(initTimeout);
 }
 
 function connectWebSocket() {
-    const ws = new WebSocket("wss://websocket.azhkthg1.net/websocket?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhbW91bnQiOjAsInVzZXJuYW1lIjoiU0NfYXBpc3Vud2luMTIzIn0.hgrRbSV6vnBwJMg9ZFtbx3rRu9mX_hZMZ_m5gMNhkw0", {
+    clearAllTimers();
+    
+    if (ws) {
+        try {
+            ws.removeAllListeners();
+            ws.terminate();
+        } catch(e) {}
+    }
+    
+    connectionCount++;
+    console.log(`[${connectionCount}] Connecting to Sun.Win...`);
+    
+    ws = new WebSocket("wss://websocket.azhkthg1.net/websocket?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhbW91bnQiOjAsInVzZXJuYW1lIjoiU0NfYXBpc3Vud2luMTIzIn0.hgrRbSV6vnBwJMg9ZFtbx3rRu9mX_hZMZ_m5gMNhkw0", {
         headers: {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
             "Origin": "https://play.sun.win"
@@ -57,9 +67,8 @@ function connectWebSocket() {
     });
 
     ws.on('open', () => {
+        console.log(`[${connectionCount}] Connected!`);
         wsConnected = true;
-        lastDataTimestamp = Date.now();
-        resetDataTimeout();
         
         const initMsgs = [
             [1, "MiniGame", "GM_apivopnhaan", "WangLin", {
@@ -71,36 +80,40 @@ function connectWebSocket() {
         ];
         
         initMsgs.forEach((msg, i) => {
-            setTimeout(() => {
-                if (ws.readyState === WebSocket.OPEN) {
+            initTimeout = setTimeout(() => {
+                if (ws && ws.readyState === WebSocket.OPEN) {
                     ws.send(JSON.stringify(msg));
+                    console.log(`[${connectionCount}] Sent init msg ${i+1}`);
                 }
-            }, i * 600);
+            }, i * 1000);
         });
 
-        setInterval(() => {
-            if (ws.readyState === WebSocket.OPEN) ws.ping();
-        }, 15000);
+        pingInterval = setInterval(() => {
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.ping();
+                console.log(`[${connectionCount}] Ping sent`);
+            }
+        }, 30000);
     });
 
     ws.on('pong', () => {
         wsConnected = true;
-        lastDataTimestamp = Date.now();
-        resetDataTimeout();
+        console.log(`[${connectionCount}] Pong received`);
     });
 
     ws.on('message', (message) => {
         try {
             wsConnected = true;
-            lastDataTimestamp = Date.now();
-            resetDataTimeout();
             
             const data = JSON.parse(message);
             if (!Array.isArray(data) || typeof data[1] !== 'object') return;
 
             const { cmd, sid, d1, d2, d3, gBB } = data[1];
 
-            if (cmd === 1008 && sid) currentSessionId = sid;
+            if (cmd === 1008 && sid) {
+                currentSessionId = sid;
+                console.log(`[${connectionCount}] Session: ${sid}`);
+            }
             
             if (cmd === 1003 && gBB && d1 && d2 && d3) {
                 const total = d1 + d2 + d3;
@@ -116,28 +129,32 @@ function connectWebSocket() {
                     "timestamp": new Date().toISOString()
                 };
                 
-                patternHistory.push(newEntry);
+                patternHistory.unshift(newEntry);
                 
                 if (patternHistory.length > MAX_HISTORY) {
-                    patternHistory = patternHistory.slice(-MAX_HISTORY);
+                    patternHistory = patternHistory.slice(0, MAX_HISTORY);
                 }
                 
                 apiResponseData = patternHistory;
                 saveHistory();
+                console.log(`[${connectionCount}] ${d1}-${d2}-${d3} = ${total} (${result}) | Total: ${patternHistory.length}`);
                 currentSessionId = null;
             }
-        } catch (e) {}
+        } catch (e) {
+            console.error(`[${connectionCount}] Parse error:`, e.message);
+        }
     });
 
-    ws.on('close', () => {
+    ws.on('close', (code, reason) => {
+        console.log(`[${connectionCount}] Closed: ${code} - ${reason}`);
         wsConnected = false;
-        clearTimeout(dataTimeout);
-        setTimeout(connectWebSocket, 2500);
+        clearAllTimers();
+        reconnectTimeout = setTimeout(connectWebSocket, 3000);
     });
 
-    ws.on('error', () => {
+    ws.on('error', (err) => {
+        console.error(`[${connectionCount}] Error:`, err.message);
         wsConnected = false;
-        ws.close();
     });
 }
 
@@ -149,5 +166,5 @@ loadHistory();
 connectWebSocket();
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`Server running on port ${PORT}`);
+    console.log(`Server running on port ${PORT} | Loaded ${patternHistory.length} records`);
 });
