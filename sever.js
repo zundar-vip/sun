@@ -203,12 +203,12 @@ function connectWebSocket() {
     });
 }
 
-app.get('/api/ditmemaysun', async (req, res) => {
+app.get('/sun', async (req, res) => {
     await refreshHistory();
     res.json(apiResponseData);
 });
 
-app.get('/health', (req, res) => {
+app.get('/sun', (req, res) => {
     res.json({
         status: 'running',
         mongodb: !!db,
