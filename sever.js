@@ -203,7 +203,7 @@ function connectWebSocket() {
     });
 }
 
-app.get('/api/ditmemaysun', async (req, res) => {
+app.get('/sun', async (req, res) => {
     await refreshHistory();
     res.json(apiResponseData);
 });
