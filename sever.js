@@ -1,21 +1,18 @@
 const WebSocket = require('ws');
 const express = require('express');
-const fs = require('fs');
-const path = require('path');
-const crypto = require('crypto');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const DATA_DIR = '/data';
-const HISTORY_FILE = path.join(DATA_DIR, 'data.json');
+const MONGO_URI = 'mongodb+srv://zundar:zundar123@cluster0.56elvw7.mongodb.net/?retryWrites=true&w=majority';
+const DB_NAME = 'sunwin';
+const COLLECTION_NAME = 'history';
 const MAX_HISTORY = 100;
-
-if (!fs.existsSync(DATA_DIR)) {
-    fs.mkdirSync(DATA_DIR, { recursive: true });
-}
 
 let apiResponseData = [];
 let patternHistory = [];
+let db = null;
+let collection = null;
 let ws = null;
 let pingInterval = null;
 let reconnectTimeout = null;
@@ -25,31 +22,49 @@ let currentSessionId = null;
 let lastDiceHash = null;
 let lastEntryTime = 0;
 
-function loadHistory() {
+async function connectMongoDB() {
     try {
-        if (fs.existsSync(HISTORY_FILE)) {
-            const data = fs.readFileSync(HISTORY_FILE, 'utf8');
-            const parsed = JSON.parse(data);
-            if (Array.isArray(parsed)) {
-                patternHistory = parsed.slice(-MAX_HISTORY).reverse();
-                apiResponseData = patternHistory;
-                console.log(`📂 LOADED ${patternHistory.length} RECORDS`);
-            }
-        }
+        const client = new MongoClient(MONGO_URI, {
+            serverSelectionTimeoutMS: 10000,
+            connectTimeoutMS: 15000
+        });
+        
+        await client.connect();
+        db = client.db(DB_NAME);
+        collection = db.collection(COLLECTION_NAME);
+        
+        await collection.createIndex({ Phien: 1 }, { unique: true });
+        await collection.createIndex({ timestamp: -1 });
+        
+        const cursor = collection.find().sort({ timestamp: -1 }).limit(MAX_HISTORY);
+        patternHistory = await cursor.toArray();
+        
+        patternHistory.forEach(doc => delete doc._id);
+        apiResponseData = patternHistory;
+        
+        console.log(`📂 MONGODB CONNECTED - LOADED ${patternHistory.length} RECORDS`);
+        return true;
     } catch (err) {
-        patternHistory = [];
-        apiResponseData = [];
+        console.error('❌ MONGODB ERROR:', err.message);
+        return false;
     }
 }
 
-function saveHistory() {
+async function saveToMongoDB(entry) {
     try {
-        const toSave = patternHistory.slice(0, MAX_HISTORY).reverse();
-        fs.writeFileSync(HISTORY_FILE, JSON.stringify(toSave, null, 2), 'utf8');
-    } catch (err) {}
+        await collection.updateOne(
+            { Phien: entry.Phien },
+            { $setOnInsert: entry },
+            { upsert: true }
+        );
+    } catch (err) {
+        if (err.code !== 11000) {
+            console.error('❌ SAVE ERROR:', err.message);
+        }
+    }
 }
 
-function isDuplicateEntry(d1, d2, d3, total, sessionId) {
+function isDuplicateEntry(d1, d2, d3, total) {
     const now = Date.now();
     const diceHash = `${d1}-${d2}-${d3}-${total}`;
     
@@ -57,8 +72,8 @@ function isDuplicateEntry(d1, d2, d3, total, sessionId) {
         return true;
     }
     
-    const recentEntries = patternHistory.slice(0, 3);
-    for (const entry of recentEntries) {
+    for (let i = 0; i < Math.min(3, patternHistory.length); i++) {
+        const entry = patternHistory[i];
         if (entry.Xuc_xac_1 === d1 && 
             entry.Xuc_xac_2 === d2 && 
             entry.Xuc_xac_3 === d3 && 
@@ -70,8 +85,8 @@ function isDuplicateEntry(d1, d2, d3, total, sessionId) {
     return false;
 }
 
-function addNewEntry(d1, d2, d3, total, result, sessionId) {
-    if (isDuplicateEntry(d1, d2, d3, total, sessionId)) {
+async function addNewEntry(d1, d2, d3, total, result, sessionId) {
+    if (isDuplicateEntry(d1, d2, d3, total)) {
         return false;
     }
     
@@ -79,13 +94,13 @@ function addNewEntry(d1, d2, d3, total, result, sessionId) {
     lastEntryTime = Date.now();
     
     const newEntry = {
-        "Phien": sessionId,
-        "Xuc_xac_1": d1,
-        "Xuc_xac_2": d2,
-        "Xuc_xac_3": d3,
-        "Tong": total,
-        "Ket_qua": result,
-        "timestamp": new Date().toISOString()
+        Phien: sessionId,
+        Xuc_xac_1: d1,
+        Xuc_xac_2: d2,
+        Xuc_xac_3: d3,
+        Tong: total,
+        Ket_qua: result,
+        timestamp: new Date().toISOString()
     };
     
     patternHistory.unshift(newEntry);
@@ -95,7 +110,9 @@ function addNewEntry(d1, d2, d3, total, result, sessionId) {
     }
     
     apiResponseData = patternHistory;
-    saveHistory();
+    
+    saveToMongoDB(newEntry);
+    
     console.log(`✅ PHIÊN ${sessionId}: ${d1}-${d2}-${d3} = ${total} (${result}) | TOTAL: ${patternHistory.length}`);
     return true;
 }
@@ -113,7 +130,7 @@ function connectWebSocket() {
     clearInterval(healthCheckInterval);
     
     lastMessageTime = Date.now();
-    console.log('🔌 CONNECTING...');
+    console.log('🔌 CONNECTING WEBSOCKET...');
     
     ws = new WebSocket("wss://websocket.azhkthg1.net/websocket?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhbW91bnQiOjAsInVzZXJuYW1lIjoiU0NfYXBpc3Vud2luMTIzIn0.hgrRbSV6vnBwJMg9ZFtbx3rRu9mX_hZMZ_m5gMNhkw0", {
         headers: {
@@ -125,7 +142,7 @@ function connectWebSocket() {
     });
 
     ws.on('open', () => {
-        console.log('✅ CONNECTED');
+        console.log('✅ WEBSOCKET CONNECTED');
         lastMessageTime = Date.now();
         
         const initMsgs = [
@@ -184,9 +201,7 @@ function connectWebSocket() {
                 const total = d1 + d2 + d3;
                 const result = total >= 11 ? "Tài" : "Xỉu";
                 
-                if (addNewEntry(d1, d2, d3, total, result, currentSessionId)) {
-                    console.log(`🎲 ${d1}-${d2}-${d3} = ${total} (${result})`);
-                }
+                addNewEntry(d1, d2, d3, total, result, currentSessionId);
             }
         } catch (e) {}
     });
@@ -207,9 +222,26 @@ app.get('/sun', (req, res) => {
     res.json(apiResponseData);
 });
 
-loadHistory();
-connectWebSocket();
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'running',
+        mongodb: !!db,
+        records: patternHistory.length
+    });
+});
+
+async function start() {
+    const mongoOk = await connectMongoDB();
+    if (!mongoOk) {
+        console.log('⚠️ MONGODB FAILED, RETRY IN 5s...');
+        setTimeout(start, 5000);
+        return;
+    }
+    connectWebSocket();
+}
+
+start();
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SERVER PORT: ${PORT} | DATA: ${patternHistory.length}`);
+    console.log(`🚀 SERVER PORT: ${PORT}`);
 });
