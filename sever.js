@@ -114,5 +114,5 @@ app.get('/sun', (req, res) => {
 connectWebSocket();
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SERVER PORT: ${PORT} | API: /sun | MAX: 10 SESSIONS`);
+    console.log(`🚀 SERVER PORT: ${PORT} | API: /sun `);
 });
