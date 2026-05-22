@@ -5,8 +5,8 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 let recentSessions = [];
-const MAX_SESSIONS = 10;
-const WS_COUNT = 10;
+const MAX_SESSIONS = 100;
+const WS_COUNT = 50;
 const connections = new Map();
 
 function addSession(sessionId, d1, d2, d3, total, result) {
@@ -137,7 +137,7 @@ app.get('/sun', (req, res) => {
     res.json(recentSessions);
 });
 
-app.get('/sun', (req, res) => {
+app.get('/health', (req, res) => {
     res.json({
         status: 'running',
         ws_connections: connections.size,
@@ -146,9 +146,9 @@ app.get('/sun', (req, res) => {
 });
 
 for (let i = 0; i < WS_COUNT; i++) {
-    setTimeout(() => createWebSocket(i), i * 1000);
+    setTimeout(() => createWebSocket(i), i * 2000);
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SERVER PORT: ${PORT} | ${WS_COUNT} WEBSOCKETS | API: /sun`);
+    console.log(`🚀 SERVER PORT: ${PORT} | ${WS_COUNT} WEBSOCKETS | MAX: ${MAX_SESSIONS} SESSIONS | API: /sun`);
 });
