@@ -7,14 +7,15 @@ app.use(cors());
 const PORT = process.env.PORT || 3001;
 
 let recentSessions = [];
-const MAX_SESSIONS = 20;
-const WS_COUNT = 20;
-let wsConnectedCount = 0;
-let serverStartTime = Date.now();
+const MAX_SESSIONS = 10;
+const WS_COUNT = 10;
+const connections = new Map();
 
 function addSession(sessionId, d1, d2, d3, total, result) {
-    if (!sessionId) return false;
-    if (recentSessions.find(s => s.Phien === sessionId)) return false;
+    if (!sessionId) return;
+    
+    const exists = recentSessions.find(s => s.Phien === sessionId);
+    if (exists) return;
     
     recentSessions.unshift({
         Phien: sessionId,
@@ -22,27 +23,43 @@ function addSession(sessionId, d1, d2, d3, total, result) {
         Xuc_xac_2: d2,
         Xuc_xac_3: d3,
         Tong: total,
-        Ket_qua: result,
-        timestamp: new Date().toISOString()
+        Ket_qua: result
     });
     
     recentSessions.sort((a, b) => b.Phien - a.Phien);
-    if (recentSessions.length > MAX_SESSIONS) recentSessions = recentSessions.slice(0, MAX_SESSIONS);
-    console.log(`✅ PHIÊN ${sessionId}: ${d1}-${d2}-${d3} = ${total} (${result}) | TỔNG: ${recentSessions.length}`);
-    return true;
+    
+    if (recentSessions.length > MAX_SESSIONS) {
+        recentSessions = recentSessions.slice(0, MAX_SESSIONS);
+    }
+    
+    console.log(`🎲 ${d1}-${d2}-${d3} = ${total} (${result}) | Phiên: ${sessionId} | Total: ${recentSessions.length}`);
 }
 
 function createWebSocket(id) {
     let ws = null;
     let keepAliveInterval = null;
     let reconnectTimeout = null;
+    let initTimeout = null;
     let currentSessionId = null;
 
-    function connect() {
+    function clearAllTimers() {
         clearInterval(keepAliveInterval);
         clearTimeout(reconnectTimeout);
-        if (ws) { try { ws.terminate(); } catch(e) {} }
+        clearTimeout(initTimeout);
+    }
 
+    function connect() {
+        clearAllTimers();
+        
+        if (ws) {
+            try {
+                ws.removeAllListeners();
+                ws.terminate();
+            } catch(e) {}
+        }
+
+        console.log(`[WS#${id}] CONNECTING...`);
+        
         ws = new WebSocket("wss://websocket.azhkthg1.net/websocket?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhbW91bnQiOjAsInVzZXJuYW1lIjoiU0NfYXBpc3Vud2luMTIzIn0.hgrRbSV6vnBwJMg9ZFtbx3rRu9mX_hZMZ_m5gMNhkw0", {
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -51,8 +68,8 @@ function createWebSocket(id) {
         });
 
         ws.on('open', () => {
-            wsConnectedCount++;
-            console.log(`[WS#${id}] CONNECTED | ACTIVE: ${wsConnectedCount}`);
+            console.log(`[WS#${id}] CONNECTED`);
+            connections.set(id, { ws, alive: true });
             
             const initMsgs = [
                 [1, "MiniGame", "GM_apivopnhaan", "WangLin", {
@@ -64,8 +81,10 @@ function createWebSocket(id) {
             ];
             
             initMsgs.forEach((msg, i) => {
-                setTimeout(() => {
-                    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
+                initTimeout = setTimeout(() => {
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify(msg));
+                    }
                 }, i * 300);
             });
 
@@ -74,33 +93,42 @@ function createWebSocket(id) {
                     ws.ping();
                     ws.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1005 }]));
                 }
-            }, 3000);
+            }, 5000 + Math.random() * 3000);
         });
 
         ws.on('message', (message) => {
             try {
                 const data = JSON.parse(message);
                 if (!Array.isArray(data) || typeof data[1] !== 'object') return;
+
                 const { cmd, sid, d1, d2, d3, gBB } = data[1];
-                if (cmd === 1008 && sid) currentSessionId = sid;
+
+                if (cmd === 1008 && sid) {
+                    currentSessionId = sid;
+                }
+                
                 if (cmd === 1003 && gBB && d1 !== undefined && d2 !== undefined && d3 !== undefined) {
                     const total = d1 + d2 + d3;
                     const result = total >= 11 ? "Tài" : "Xỉu";
-                    addSession(currentSessionId || sid, d1, d2, d3, total, result);
+                    const sessionId = currentSessionId || sid;
+                    
+                    if (sessionId) {
+                        addSession(sessionId, d1, d2, d3, total, result);
+                    }
                 }
             } catch (e) {}
         });
 
         ws.on('close', () => {
-            wsConnectedCount--;
-            console.log(`[WS#${id}] DISCONNECTED | ACTIVE: ${wsConnectedCount}`);
-            clearInterval(keepAliveInterval);
-            reconnectTimeout = setTimeout(() => connect(), 1000);
+            console.log(`[WS#${id}] DISCONNECTED`);
+            connections.delete(id);
+            clearAllTimers();
+            reconnectTimeout = setTimeout(() => connect(), 1000 + Math.random() * 2000);
         });
 
-        ws.on('error', () => {
-            wsConnectedCount--;
-            ws.close();
+        ws.on('error', (err) => {
+            console.error(`[WS#${id}] ERROR: ${err.message}`);
+            connections.delete(id);
         });
     }
 
@@ -108,21 +136,14 @@ function createWebSocket(id) {
 }
 
 app.get('/sun', (req, res) => {
-    res.json({
-        status: recentSessions.length > 0 ? 'ok' : 'waiting_for_data',
-        total: recentSessions.length,
-        data: recentSessions
-    });
+    res.json(recentSessions);
 });
 
 app.get('/health', (req, res) => {
     res.json({
         status: 'running',
-        uptime: Math.floor((Date.now() - serverStartTime) / 1000) + 's',
-        ws_connected: wsConnectedCount,
-        ws_total: WS_COUNT,
-        sessions: recentSessions.length,
-        last_session: recentSessions[0] || null
+        ws_connections: connections.size,
+        sessions: recentSessions.length
     });
 });
 
@@ -131,5 +152,5 @@ for (let i = 0; i < WS_COUNT; i++) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SERVER PORT: ${PORT} | ${WS_COUNT} WS | API: /sun | HEALTH: /health`);
+    console.log(`🚀 SERVER PORT: ${PORT} | ${WS_COUNT} WEBSOCKETS | CORS ENABLED | API: /sun`);
 });
