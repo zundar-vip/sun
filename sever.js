@@ -1,9 +1,7 @@
 const WebSocket = require('ws');
 const express = require('express');
-const cors = require('cors');
 
 const app = express();
-app.use(cors());
 const PORT = process.env.PORT || 3001;
 
 let recentSessions = [];
@@ -152,5 +150,5 @@ for (let i = 0; i < WS_COUNT; i++) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 SERVER PORT: ${PORT} | ${WS_COUNT} WEBSOCKETS | CORS ON | API: /sun`);
+    console.log(`🚀 SERVER PORT: ${PORT} | ${WS_COUNT} WEBSOCKETS | API: /sun`);
 });
