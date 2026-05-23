@@ -22,9 +22,8 @@ const initialMessages = [
 ];
 
 let recentSessions = [];
-const MAX_SESSIONS = 30;
-const WS_COUNT = 30;
-let wsList = [];
+const MAX_SESSIONS = 100;
+const WS_COUNT = 100;
 
 function addSession(sessionId, d1, d2, d3, total, result) {
     if (!sessionId) return;
@@ -41,90 +40,65 @@ function addSession(sessionId, d1, d2, d3, total, result) {
     
     recentSessions.sort((a, b) => b.Phien - a.Phien);
     if (recentSessions.length > MAX_SESSIONS) recentSessions = recentSessions.slice(0, MAX_SESSIONS);
-    console.log(`🎲 ${d1}-${d2}-${d3} = ${total} (${result}) | Phiên: ${sessionId} | Tổng: ${recentSessions.length}`);
+    console.log(`✅ ${sessionId}: ${d1}-${d2}-${d3} = ${total} (${result}) | TỔNG: ${recentSessions.length}`);
 }
 
-function createConnection(id) {
+function createWS(id) {
     let ws = null;
-    let pingInterval = null;
-    let reconnectTimeout = null;
-    let initTimeout = null;
-    let currentSessionId = null;
-
-    function clearAll() {
-        clearInterval(pingInterval);
-        clearTimeout(reconnectTimeout);
-        clearTimeout(initTimeout);
-    }
+    let keepAlive = null;
+    let reconnect = null;
+    let sid = null;
 
     function connect() {
-        clearAll();
-        if (ws) { try { ws.removeAllListeners(); ws.terminate(); } catch(e) {} }
+        clearInterval(keepAlive);
+        clearTimeout(reconnect);
+        if (ws) { try { ws.terminate(); } catch(e) {} }
 
         ws = new WebSocket(WEBSOCKET_URL, { headers: WS_HEADERS });
 
         ws.on('open', () => {
-            console.log(`[WS#${id}] ✅ CONNECTED`);
-            
-            initialMessages.forEach((msg, i) => {
-                initTimeout = setTimeout(() => {
-                    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
-                }, i * 300);
+            initialMessages.forEach((m, i) => {
+                setTimeout(() => {
+                    if (ws && ws.readyState === 1) ws.send(JSON.stringify(m));
+                }, i * 200);
             });
 
-            pingInterval = setInterval(() => {
-                if (ws && ws.readyState === WebSocket.OPEN) {
+            keepAlive = setInterval(() => {
+                if (ws && ws.readyState === 1) {
                     ws.ping();
                     ws.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1005 }]));
                 }
-            }, 5000 + Math.random() * 3000);
+            }, 2000);
         });
 
-        ws.on('message', (message) => {
+        ws.on('message', (msg) => {
             try {
-                const data = JSON.parse(message);
-                if (!Array.isArray(data) || typeof data[1] !== 'object') return;
-                const { cmd, sid, d1, d2, d3, gBB } = data[1];
-                if (cmd === 1008 && sid) currentSessionId = sid;
-                if (cmd === 1003 && gBB && d1 !== undefined && d2 !== undefined && d3 !== undefined) {
-                    const total = d1 + d2 + d3;
-                    const result = total >= 11 ? "Tài" : "Xỉu";
-                    addSession(currentSessionId || sid, d1, d2, d3, total, result);
+                const d = JSON.parse(msg);
+                if (!Array.isArray(d) || typeof d[1] !== 'object') return;
+                const { cmd, d1, d2, d3, gBB } = d[1];
+                if (cmd === 1008 && d[1].sid) sid = d[1].sid;
+                if (cmd === 1003 && gBB && d1 !== undefined) {
+                    addSession(sid, d1, d2, d3, d1+d2+d3, (d1+d2+d3) >= 11 ? "Tài" : "Xỉu");
                 }
-            } catch (e) {}
+            } catch(e) {}
         });
 
         ws.on('close', () => {
-            console.log(`[WS#${id}] 🔌 ĐỨT - KẾT NỐI LẠI 2.5S...`);
-            clearAll();
-            reconnectTimeout = setTimeout(() => connect(), 2500);
+            clearInterval(keepAlive);
+            reconnect = setTimeout(connect, 500);
         });
 
-        ws.on('error', (err) => {
-            console.error(`[WS#${id}] ❌ LỖI: ${err.message}`);
-            ws.close();
-        });
+        ws.on('error', () => ws.close());
     }
-
     connect();
 }
 
-app.get('/sun', (req, res) => {
-    res.json(recentSessions);
-});
-
-app.get('/health', (req, res) => {
-    res.json({
-        status: 'running',
-        ws_count: WS_COUNT,
-        sessions: recentSessions.length
-    });
-});
+app.get('/sun', (req, res) => res.json(recentSessions));
 
 for (let i = 0; i < WS_COUNT; i++) {
-    setTimeout(() => createConnection(i), i * 1000);
+    setTimeout(() => createWS(i), i * 1500);
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 ${WS_COUNT} WS | ${MAX_SESSIONS} PHIÊN | CORS | API: /sun | PORT: ${PORT}`);
+    console.log(`🚀 ${WS_COUNT} WS | ${MAX_SESSIONS} PHIÊN | PORT: ${PORT}`);
 });
