@@ -5,8 +5,8 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 let recentSessions = [];
-const MAX_SESSIONS = 30;
-const WS_COUNT = 30;
+const MAX_SESSIONS = 10;
+const WS_COUNT = 10;
 const connections = new Map();
 
 function addSession(sessionId, d1, d2, d3, total, result) {
