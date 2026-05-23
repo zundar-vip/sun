@@ -1,33 +1,85 @@
 const WebSocket = require('ws');
 const express = require('express');
+const { MongoClient } = require('mongodb');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const MONGO_URI = 'mongodb+srv://zundar:zundar123@cluster0.56elvw7.mongodb.net/?retryWrites=true&w=majority';
+const DB_NAME = 'sunwin';
+const COLLECTION_NAME = 'history';
+const MAX_SESSIONS = 100;
+const WS_COUNT = 100;
 
 let recentSessions = [];
-const MAX_SESSIONS = 100;
-const WS_COUNT = 150;
+let db = null;
+let collection = null;
 const connections = new Map();
 
-function addSession(sessionId, d1, d2, d3, total, result) {
-    if (!sessionId) return;
+async function connectMongoDB() {
+    try {
+        const client = new MongoClient(MONGO_URI);
+        await client.connect();
+        db = client.db(DB_NAME);
+        collection = db.collection(COLLECTION_NAME);
+        await collection.createIndex({ Phien: -1 }, { unique: true });
+        
+        const cursor = collection.find().sort({ Phien: -1 }).limit(MAX_SESSIONS);
+        recentSessions = await cursor.toArray();
+        recentSessions.forEach(doc => delete doc._id);
+        
+        console.log(`📂 LOADED ${recentSessions.length} FROM MONGODB`);
+        return true;
+    } catch (err) {
+        console.error('❌ MONGODB ERROR:', err.message);
+        return false;
+    }
+}
+
+async function refreshFromDB() {
+    if (!collection) return;
+    try {
+        const cursor = collection.find().sort({ Phien: -1 }).limit(MAX_SESSIONS);
+        recentSessions = await cursor.toArray();
+        recentSessions.forEach(doc => delete doc._id);
+    } catch (err) {}
+}
+
+async function addSession(sessionId, d1, d2, d3, total, result) {
+    if (!sessionId || !collection) return;
     
-    const exists = recentSessions.find(s => s.Phien === sessionId);
-    if (exists) return;
-    
-    recentSessions.unshift({
-        Phien: sessionId,
-        Xuc_xac_1: d1,
-        Xuc_xac_2: d2,
-        Xuc_xac_3: d3,
-        Tong: total,
-        Ket_qua: result
-    });
-    
-    recentSessions.sort((a, b) => b.Phien - a.Phien);
-    
-    if (recentSessions.length > MAX_SESSIONS) {
-        recentSessions = recentSessions.slice(0, MAX_SESSIONS);
+    try {
+        await collection.insertOne({
+            Phien: sessionId,
+            Xuc_xac_1: d1,
+            Xuc_xac_2: d2,
+            Xuc_xac_3: d3,
+            Tong: total,
+            Ket_qua: result,
+            timestamp: new Date().toISOString()
+        });
+        
+        const exists = recentSessions.find(s => s.Phien === sessionId);
+        if (!exists) {
+            recentSessions.unshift({
+                Phien: sessionId,
+                Xuc_xac_1: d1,
+                Xuc_xac_2: d2,
+                Xuc_xac_3: d3,
+                Tong: total,
+                Ket_qua: result
+            });
+            
+            recentSessions.sort((a, b) => b.Phien - a.Phien);
+            
+            if (recentSessions.length > MAX_SESSIONS) {
+                recentSessions = recentSessions.slice(0, MAX_SESSIONS);
+            }
+            
+            console.log(`✅ PHIÊN ${sessionId}: ${d1}-${d2}-${d3} = ${total} (${result}) | Total: ${recentSessions.length}`);
+        }
+    } catch (err) {
+        if (err.code === 11000) return;
+        console.error('❌ INSERT ERROR:', err.message);
     }
 }
 
@@ -46,7 +98,6 @@ function createWebSocket(id) {
 
     function connect() {
         clearAllTimers();
-        
         if (ws) {
             try { ws.removeAllListeners(); ws.terminate(); } catch(e) {}
         }
@@ -81,10 +132,10 @@ function createWebSocket(id) {
                     ws.ping();
                     ws.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1005 }]));
                 }
-            }, 4000 + Math.random() * 3000);
+            }, 3000 + Math.random() * 2000);
         });
 
-        ws.on('message', (message) => {
+        ws.on('message', async (message) => {
             try {
                 const data = JSON.parse(message);
                 if (!Array.isArray(data) || typeof data[1] !== 'object') return;
@@ -93,7 +144,7 @@ function createWebSocket(id) {
                 if (cmd === 1003 && gBB && d1 !== undefined && d2 !== undefined && d3 !== undefined) {
                     const total = d1 + d2 + d3;
                     const result = total >= 11 ? "Tài" : "Xỉu";
-                    addSession(currentSessionId || sid, d1, d2, d3, total, result);
+                    await addSession(currentSessionId || sid, d1, d2, d3, total, result);
                 }
             } catch (e) {}
         });
@@ -101,7 +152,7 @@ function createWebSocket(id) {
         ws.on('close', () => {
             connections.delete(id);
             clearAllTimers();
-            reconnectTimeout = setTimeout(() => connect(), 800 + Math.random() * 1500);
+            reconnectTimeout = setTimeout(() => connect(), 500 + Math.random() * 1000);
         });
 
         ws.on('error', () => connections.delete(id));
@@ -110,18 +161,34 @@ function createWebSocket(id) {
     connect();
 }
 
-app.get('/sun', (req, res) => res.json(recentSessions));
+app.get('/sun', async (req, res) => {
+    await refreshFromDB();
+    res.json(recentSessions);
+});
 
 app.get('/health', (req, res) => res.json({
     status: 'running',
+    mongodb: !!db,
     ws_connections: connections.size,
     sessions: recentSessions.length
 }));
 
-for (let i = 0; i < WS_COUNT; i++) {
-    setTimeout(() => createWebSocket(i), i * 1500);
+async function start() {
+    const mongoOk = await connectMongoDB();
+    if (!mongoOk) {
+        setTimeout(start, 5000);
+        return;
+    }
+    
+    for (let i = 0; i < WS_COUNT; i++) {
+        setTimeout(() => createWebSocket(i), i * 1500);
+    }
+    
+    setInterval(refreshFromDB, 10000);
 }
 
+start();
+
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(` ${WS_COUNT} WS | MAX: ${MAX_SESSIONS} | API: /sun | PORT: ${PORT}`);
+    console.log(`🚀 ${WS_COUNT} WS | MONGODB | MAX: ${MAX_SESSIONS} | API: /sun | PORT: ${PORT}`);
 });
