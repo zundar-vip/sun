@@ -5,8 +5,8 @@ const app = express();
 const PORT = process.env.PORT || 3001;
 
 let recentSessions = [];
-const MAX_SESSIONS = 100;
-const WS_COUNT = 100;
+const MAX_SESSIONS = 10;
+const WS_COUNT = 10;
 const connections = new Map();
 
 function addSession(sessionId, d1, d2, d3, total, result) {
@@ -21,8 +21,7 @@ function addSession(sessionId, d1, d2, d3, total, result) {
         Xuc_xac_2: d2,
         Xuc_xac_3: d3,
         Tong: total,
-        Ket_qua: result,
-        timestamp: new Date().toISOString()
+        Ket_qua: result
     });
     
     recentSessions.sort((a, b) => b.Phien - a.Phien);
@@ -30,6 +29,8 @@ function addSession(sessionId, d1, d2, d3, total, result) {
     if (recentSessions.length > MAX_SESSIONS) {
         recentSessions = recentSessions.slice(0, MAX_SESSIONS);
     }
+    
+    console.log(`🎲 ${d1}-${d2}-${d3} = ${total} (${result}) | Phiên: ${sessionId} | Total: ${recentSessions.length}`);
 }
 
 function createWebSocket(id) {
@@ -47,10 +48,16 @@ function createWebSocket(id) {
 
     function connect() {
         clearAllTimers();
+        
         if (ws) {
-            try { ws.removeAllListeners(); ws.terminate(); } catch(e) {}
+            try {
+                ws.removeAllListeners();
+                ws.terminate();
+            } catch(e) {}
         }
 
+        console.log(`[WS#${id}] CONNECTING...`);
+        
         ws = new WebSocket("wss://websocket.azhkthg1.net/websocket?token=eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJhbW91bnQiOjAsInVzZXJuYW1lIjoiU0NfYXBpc3Vud2luMTIzIn0.hgrRbSV6vnBwJMg9ZFtbx3rRu9mX_hZMZ_m5gMNhkw0", {
             headers: {
                 "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36",
@@ -59,6 +66,7 @@ function createWebSocket(id) {
         });
 
         ws.on('open', () => {
+            console.log(`[WS#${id}] CONNECTED`);
             connections.set(id, { ws, alive: true });
             
             const initMsgs = [
@@ -72,8 +80,10 @@ function createWebSocket(id) {
             
             initMsgs.forEach((msg, i) => {
                 initTimeout = setTimeout(() => {
-                    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(msg));
-                }, i * 200);
+                    if (ws && ws.readyState === WebSocket.OPEN) {
+                        ws.send(JSON.stringify(msg));
+                    }
+                }, i * 300);
             });
 
             keepAliveInterval = setInterval(() => {
@@ -81,47 +91,64 @@ function createWebSocket(id) {
                     ws.ping();
                     ws.send(JSON.stringify([6, "MiniGame", "taixiuPlugin", { cmd: 1005 }]));
                 }
-            }, 2000 + Math.random() * 1000);
+            }, 5000 + Math.random() * 3000);
         });
 
         ws.on('message', (message) => {
             try {
                 const data = JSON.parse(message);
                 if (!Array.isArray(data) || typeof data[1] !== 'object') return;
+
                 const { cmd, sid, d1, d2, d3, gBB } = data[1];
-                if (cmd === 1008 && sid) currentSessionId = sid;
+
+                if (cmd === 1008 && sid) {
+                    currentSessionId = sid;
+                }
+                
                 if (cmd === 1003 && gBB && d1 !== undefined && d2 !== undefined && d3 !== undefined) {
                     const total = d1 + d2 + d3;
                     const result = total >= 11 ? "Tài" : "Xỉu";
-                    addSession(currentSessionId || sid, d1, d2, d3, total, result);
+                    const sessionId = currentSessionId || sid;
+                    
+                    if (sessionId) {
+                        addSession(sessionId, d1, d2, d3, total, result);
+                    }
                 }
             } catch (e) {}
         });
 
         ws.on('close', () => {
+            console.log(`[WS#${id}] DISCONNECTED`);
             connections.delete(id);
             clearAllTimers();
-            reconnectTimeout = setTimeout(() => connect(), 500 + Math.random() * 500);
+            reconnectTimeout = setTimeout(() => connect(), 1000 + Math.random() * 2000);
         });
 
-        ws.on('error', () => connections.delete(id));
+        ws.on('error', (err) => {
+            console.error(`[WS#${id}] ERROR: ${err.message}`);
+            connections.delete(id);
+        });
     }
 
     connect();
 }
 
-app.get('/sun', (req, res) => res.json(recentSessions));
+app.get('/sun', (req, res) => {
+    res.json(recentSessions);
+});
 
-app.get('/sun', (req, res) => res.json({
-    status: 'running',
-    ws_connections: connections.size,
-    sessions: recentSessions.length
-}));
+app.get('/sun', (req, res) => {
+    res.json({
+        status: 'running',
+        ws_connections: connections.size,
+        sessions: recentSessions.length
+    });
+});
 
 for (let i = 0; i < WS_COUNT; i++) {
-    setTimeout(() => createWebSocket(i), i * 1500);
+    setTimeout(() => createWebSocket(i), i * 1000);
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 ${WS_COUNT} WS | RAM ONLY | MAX: ${MAX_SESSIONS} | API: /sun | PORT: ${PORT}`);
+    console.log(`🚀 SERVER PORT: ${PORT} | ${WS_COUNT} WEBSOCKETS | API: /sun`);
 });
