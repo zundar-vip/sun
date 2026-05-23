@@ -9,10 +9,12 @@ const PORT = process.env.PORT || 3001;
 let recentSessions = [];
 const MAX_SESSIONS = 20;
 const WS_COUNT = 20;
+let wsConnectedCount = 0;
+let serverStartTime = Date.now();
 
 function addSession(sessionId, d1, d2, d3, total, result) {
-    if (!sessionId) return;
-    if (recentSessions.find(s => s.Phien === sessionId)) return;
+    if (!sessionId) return false;
+    if (recentSessions.find(s => s.Phien === sessionId)) return false;
     
     recentSessions.unshift({
         Phien: sessionId,
@@ -26,6 +28,8 @@ function addSession(sessionId, d1, d2, d3, total, result) {
     
     recentSessions.sort((a, b) => b.Phien - a.Phien);
     if (recentSessions.length > MAX_SESSIONS) recentSessions = recentSessions.slice(0, MAX_SESSIONS);
+    console.log(`✅ PHIÊN ${sessionId}: ${d1}-${d2}-${d3} = ${total} (${result}) | TỔNG: ${recentSessions.length}`);
+    return true;
 }
 
 function createWebSocket(id) {
@@ -47,6 +51,9 @@ function createWebSocket(id) {
         });
 
         ws.on('open', () => {
+            wsConnectedCount++;
+            console.log(`[WS#${id}] CONNECTED | ACTIVE: ${wsConnectedCount}`);
+            
             const initMsgs = [
                 [1, "MiniGame", "GM_apivopnhaan", "WangLin", {
                     "info": "{\"ipAddress\":\"113.185.45.88\",\"wsToken\":\"eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9.eyJnZW5kZXIiOjAsImNhblZpZXdTdGF0IjpmYWxzZSwiZGlzcGxheU5hbWUiOiJwbGFtYW1hIiwiYm90IjowLCJpc01lcmNoYW50IjpmYWxzZSwidmVyaWZpZWRCYW5rQWNjb3VudCI6ZmFsc2UsInBsYXlFdmVudExvYmJ5IjpmYWxzZSwiY3VzdG9tZXJJZCI6MzMxNDgxMTYyLCJhZmZJZCI6IkdFTVdJTiIsImJhbm5lZCI6ZmFsc2UsImJyYW5kIjoiZ2VtIiwidGltZXN0YW1wIjoxNzY2NDc0NzgwMDA2LCJsb2NrR2FtZXMiOltdLCJhbW91bnQiOjAsImxvY2tDaGF0IjpmYWxzZSwicGhvbmVWZXJpZmllZCI6ZmFsc2UsImlwQWRkcmVzcyI6IjExMy4xODUuNDUuODgiLCJtdXRlIjpmYWxzZSwiYXZhdGFyIjoiaHR0cHM6Ly9pbWFnZXMuc3dpbnNob3AubmV0L2ltYWdlcy9hdmF0YXIvYXZhdGFyXzE4LnBuZyIsInBsYXRmb3JtSWQiOjUsInVzZXJJZCI6IjZhOGI0ZDM4LTFlYzEtNDUxYi1hYTA1LWYyZDkwYWFhNGM1MCIsInJlZ1RpbWUiOjE3NjY0NzQ3NTEzOTEsInBob25lIjoiIiwiZGVwb3NpdCI6ZmFsc2UsInVzZXJuYW1lIjoiR01fYXBpdm9wbmhhYW4ifQ.YFOscbeojWNlRo7490BtlzkDGYmwVpnlgOoh04oCJy4\",\"locale\":\"vi\",\"userId\":\"6a8b4d38-1ec1-451b-aa05-f2d90aaa4c50\",\"username\":\"GM_apivopnhaan\",\"timestamp\":1766474780007,\"refreshToken\":\"63d5c9be0c494b74b53ba150d69039fd.7592f06d63974473b4aaa1ea849b2940\"}",
@@ -85,22 +92,44 @@ function createWebSocket(id) {
         });
 
         ws.on('close', () => {
+            wsConnectedCount--;
+            console.log(`[WS#${id}] DISCONNECTED | ACTIVE: ${wsConnectedCount}`);
             clearInterval(keepAliveInterval);
             reconnectTimeout = setTimeout(() => connect(), 1000);
         });
 
-        ws.on('error', () => ws.close());
+        ws.on('error', () => {
+            wsConnectedCount--;
+            ws.close();
+        });
     }
 
     connect();
 }
 
-app.get('/sun', (req, res) => res.json(recentSessions));
+app.get('/sun', (req, res) => {
+    res.json({
+        status: recentSessions.length > 0 ? 'ok' : 'waiting_for_data',
+        total: recentSessions.length,
+        data: recentSessions
+    });
+});
+
+app.get('/health', (req, res) => {
+    res.json({
+        status: 'running',
+        uptime: Math.floor((Date.now() - serverStartTime) / 1000) + 's',
+        ws_connected: wsConnectedCount,
+        ws_total: WS_COUNT,
+        sessions: recentSessions.length,
+        last_session: recentSessions[0] || null
+    });
+});
 
 for (let i = 0; i < WS_COUNT; i++) {
     setTimeout(() => createWebSocket(i), i * 1000);
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 ${WS_COUNT} WS | ${MAX_SESSIONS} SESSIONS | CORS | API: /sun | PORT: ${PORT}`);
+    console.log(`🚀 SERVER PORT: ${PORT} | ${WS_COUNT} WS | API: /sun | HEALTH: /health`);
 });
