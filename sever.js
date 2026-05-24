@@ -24,30 +24,12 @@ const initialMessages = [
 let recentSessions = [];
 const MAX_SESSIONS = 10;
 const WS_COUNT = 10;
-
-function addSession(sessionId, d1, d2, d3, total, result) {
-    if (!sessionId) return;
-    if (recentSessions.find(s => s.Phien === sessionId)) return;
-    
-    recentSessions.unshift({
-        Phien: sessionId,
-        Xuc_xac_1: d1,
-        Xuc_xac_2: d2,
-        Xuc_xac_3: d3,
-        Tong: total,
-        Ket_qua: result
-    });
-    
-    recentSessions.sort((a, b) => b.Phien - a.Phien);
-    if (recentSessions.length > MAX_SESSIONS) recentSessions = recentSessions.slice(0, MAX_SESSIONS);
-    console.log(`🎲 ${d1}-${d2}-${d3} = ${total} (${result}) | Phiên: ${sessionId}`);
-}
+let sid = null;
 
 function createWS(id) {
     let ws = null;
     let keepAlive = null;
     let reconnect = null;
-    let sid = null;
 
     function connect() {
         clearInterval(keepAlive);
@@ -77,9 +59,24 @@ function createWS(id) {
                 if (!Array.isArray(d) || typeof d[1] !== 'object') return;
                 const { cmd, d1, d2, d3, gBB } = d[1];
                 if (cmd === 1008 && d[1].sid) sid = d[1].sid;
-                if (cmd === 1003 && gBB && d1 !== undefined) {
+                if (cmd === 1003 && gBB && d1 !== undefined && d2 !== undefined && d3 !== undefined) {
                     const total = d1 + d2 + d3;
-                    addSession(sid, d1, d2, d3, total, total >= 11 ? "Tài" : "Xỉu");
+                    const result = total >= 11 ? "Tài" : "Xỉu";
+                    const sessionId = sid;
+                    
+                    if (sessionId && !recentSessions.find(s => s.Phien === sessionId)) {
+                        recentSessions.unshift({
+                            Phien: sessionId,
+                            Xuc_xac_1: d1,
+                            Xuc_xac_2: d2,
+                            Xuc_xac_3: d3,
+                            Tong: total,
+                            Ket_qua: result
+                        });
+                        
+                        recentSessions.sort((a, b) => b.Phien - a.Phien);
+                        if (recentSessions.length > MAX_SESSIONS) recentSessions = recentSessions.slice(0, MAX_SESSIONS);
+                    }
                 }
             } catch(e) {}
         });
@@ -101,5 +98,5 @@ for (let i = 0; i < WS_COUNT; i++) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 ${WS_COUNT} WS | 10 PHIÊN | CORS | PORT: ${PORT}`);
+    console.log(`🚀 ${WS_COUNT} WS | 10 PHIÊN | 0% DELAY | PORT: ${PORT}`);
 });
