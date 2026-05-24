@@ -22,8 +22,8 @@ const initialMessages = [
 ];
 
 let recentSessions = [];
-const MAX_SESSIONS = 100;
-const WS_COUNT = 100;
+const MAX_SESSIONS = 10;
+const WS_COUNT = 10;
 
 function addSession(sessionId, d1, d2, d3, total, result) {
     if (!sessionId) return;
@@ -40,7 +40,7 @@ function addSession(sessionId, d1, d2, d3, total, result) {
     
     recentSessions.sort((a, b) => b.Phien - a.Phien);
     if (recentSessions.length > MAX_SESSIONS) recentSessions = recentSessions.slice(0, MAX_SESSIONS);
-    console.log(`✅ ${sessionId}: ${d1}-${d2}-${d3} = ${total} (${result}) | TỔNG: ${recentSessions.length}`);
+    console.log(`🎲 ${d1}-${d2}-${d3} = ${total} (${result}) | Phiên: ${sessionId}`);
 }
 
 function createWS(id) {
@@ -78,7 +78,8 @@ function createWS(id) {
                 const { cmd, d1, d2, d3, gBB } = d[1];
                 if (cmd === 1008 && d[1].sid) sid = d[1].sid;
                 if (cmd === 1003 && gBB && d1 !== undefined) {
-                    addSession(sid, d1, d2, d3, d1+d2+d3, (d1+d2+d3) >= 11 ? "Tài" : "Xỉu");
+                    const total = d1 + d2 + d3;
+                    addSession(sid, d1, d2, d3, total, total >= 11 ? "Tài" : "Xỉu");
                 }
             } catch(e) {}
         });
@@ -96,9 +97,9 @@ function createWS(id) {
 app.get('/sun', (req, res) => res.json(recentSessions));
 
 for (let i = 0; i < WS_COUNT; i++) {
-    setTimeout(() => createWS(i), i * 1500);
+    setTimeout(() => createWS(i), i * 1000);
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`🚀 ${WS_COUNT} WS | ${MAX_SESSIONS} PHIÊN | PORT: ${PORT}`);
+    console.log(`🚀 ${WS_COUNT} WS | 10 PHIÊN | CORS | PORT: ${PORT}`);
 });
