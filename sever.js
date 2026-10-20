@@ -24,12 +24,12 @@ const initialMessages = [
 let recentSessions = [];
 const MAX_SESSIONS = 10;
 const WS_COUNT = 10;
+let sid = null;
 
 function createWS(id) {
     let ws = null;
     let keepAlive = null;
     let reconnect = null;
-    let sid = null;
 
     function connect() {
         clearInterval(keepAlive);
@@ -56,28 +56,15 @@ function createWS(id) {
         ws.on('message', (msg) => {
             try {
                 const d = JSON.parse(msg);
-                if (!Array.isArray(d)) return;
-
-                const payload = (d.length >= 4 && typeof d[3] === 'object' && d[3] !== null) ? d[3]
-                              : (d.length >= 2 && typeof d[1] === 'object' && d[1] !== null) ? d[1]
-                              : null;
-                if (!payload) return;
-
-                const { cmd, d1, d2, d3 } = payload;
-
-                // Cập nhật sid từ handshake
-                if (cmd === 1008 && payload.sid != null) sid = payload.sid;
-
-                // Kết quả round — bỏ gBB, lấy sid từ payload nếu server nhét thẳng vào 1003
-                if (cmd === 1003 && d1 !== undefined && d2 !== undefined && d3 !== undefined) {
-                    const sessionId = payload.sid != null ? payload.sid : sid;
-                    if (sessionId == null) return;
-
+                if (!Array.isArray(d) || typeof d[1] !== 'object') return;
+                const { cmd, d1, d2, d3, gBB } = d[1];
+                if (cmd === 1008 && d[1].sid) sid = d[1].sid;
+                if (cmd === 1003 && gBB && d1 !== undefined && d2 !== undefined && d3 !== undefined) {
                     const total = d1 + d2 + d3;
                     const result = total >= 11 ? "Tài" : "Xỉu";
-
-                    // == để tránh lỗi string/number type mismatch
-                    if (!recentSessions.find(s => s.Phien == sessionId)) {
+                    const sessionId = sid;
+                    
+                    if (sessionId && !recentSessions.find(s => s.Phien === sessionId)) {
                         recentSessions.unshift({
                             Phien: sessionId,
                             Xuc_xac_1: d1,
@@ -86,9 +73,9 @@ function createWS(id) {
                             Tong: total,
                             Ket_qua: result
                         });
+                        
                         recentSessions.sort((a, b) => b.Phien - a.Phien);
-                        if (recentSessions.length > MAX_SESSIONS)
-                            recentSessions = recentSessions.slice(0, MAX_SESSIONS);
+                        if (recentSessions.length > MAX_SESSIONS) recentSessions = recentSessions.slice(0, MAX_SESSIONS);
                     }
                 }
             } catch(e) {}
@@ -111,5 +98,5 @@ for (let i = 0; i < WS_COUNT; i++) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`${WS_COUNT} WS connections : port ${PORT}`);
+    console.log(` ${WS_COUNT} : ${PORT}`);
 });
