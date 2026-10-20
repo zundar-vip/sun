@@ -21,15 +21,91 @@ const initialMessages = [
     [6, "MiniGame", "lobbyPlugin", { cmd: 10001 }]
 ];
 
+let allSessions = [];
 let recentSessions = [];
-const MAX_SESSIONS = 10;
+const MAX_DISPLAY = 10;
+const MAX_STORE = 100;
 const WS_COUNT = 10;
+let nextPrediction = "Tài";
+let lastSessionId = 0;
+
+function detectPattern(history) {
+    const arr = history.map(s => s.Ket_qua === "Tài" ? "T" : "X");
+    if (arr.length < 2) return nextPrediction;
+
+    const n = arr.length;
+
+    if (n >= 3) {
+        let bệtLen = 1;
+        for (let i = 1; i < n && i < 6; i++) {
+            if (arr[i] === arr[0]) bệtLen++;
+            else break;
+        }
+        if (bệtLen >= 3) return arr[0] === "T" ? "Tài" : "Xỉu";
+    }
+
+    if (n >= 4) {
+        if (arr[0] === arr[2] && arr[1] === arr[3] && arr[0] !== arr[1]) {
+            return arr[1] === "T" ? "Tài" : "Xỉu";
+        }
+    }
+
+    if (n >= 3) {
+        if (arr[0] !== arr[1] && arr[1] !== arr[2] && arr[0] === arr[2]) {
+            return arr[0] === "T" ? "Xỉu" : "Tài";
+        }
+    }
+
+    if (n >= 6) {
+        const s = arr.slice(0, 6);
+        if (s.join("") === "TTXXTT") return "Xỉu";
+        if (s.join("") === "XXTTXX") return "Tài";
+    }
+
+    if (n >= 4) {
+        const s = arr.slice(0, 4);
+        if (s.join("") === "TTTT") return "Tài";
+        if (s.join("") === "XXXX") return "Xỉu";
+    }
+
+    let countT = 0, countX = 0;
+    for (let i = 0; i < Math.min(n, 5); i++) {
+        if (arr[i] === "T") countT++;
+        else countX++;
+    }
+    return countT > countX ? "Tài" : "Xỉu";
+}
+
+function addSession(sessionId, d1, d2, d3, total, result) {
+    if (!sessionId) return;
+    if (allSessions.find(s => s.Phien === sessionId)) return;
+    if (sessionId <= lastSessionId) return;
+
+    lastSessionId = sessionId;
+
+    const entry = {
+        Phien: sessionId,
+        Xuc_xac_1: d1,
+        Xuc_xac_2: d2,
+        Xuc_xac_3: d3,
+        Tong: total,
+        Ket_qua: result,
+        Du_doan: nextPrediction
+    };
+
+    allSessions.unshift(entry);
+    if (allSessions.length > MAX_STORE) allSessions = allSessions.slice(0, MAX_STORE);
+
+    recentSessions = allSessions.slice(0, MAX_DISPLAY);
+
+    nextPrediction = detectPattern(allSessions);
+}
 
 function createWS(id) {
     let ws = null;
     let keepAlive = null;
     let reconnect = null;
-    let sid = null; // per-connection, không share global
+    let localSid = null;
 
     function connect() {
         clearInterval(keepAlive);
@@ -56,38 +132,13 @@ function createWS(id) {
         ws.on('message', (msg) => {
             try {
                 const d = JSON.parse(msg);
-                if (!Array.isArray(d)) return;
-
-                // server response mirrors send format:
-                //   4-part: [N, "MiniGame", "pluginName", {data}]  ← taixiu game events
-                //   2-part: [N, {data}]                            ← handshake / fallback
-                const payload = (d.length >= 4 && typeof d[3] === 'object' && d[3] !== null) ? d[3]
-                              : (d.length >= 2 && typeof d[1] === 'object' && d[1] !== null) ? d[1]
-                              : null;
-                if (!payload) return;
-
-                const { cmd, d1, d2, d3, gBB } = payload;
-
-                if (cmd === 1008 && payload.sid) sid = payload.sid;
-
+                if (!Array.isArray(d) || typeof d[1] !== 'object') return;
+                const { cmd, sid, d1, d2, d3, gBB } = d[1];
+                if (cmd === 1008 && sid) localSid = sid;
                 if (cmd === 1003 && gBB && d1 !== undefined && d2 !== undefined && d3 !== undefined) {
                     const total = d1 + d2 + d3;
                     const result = total >= 11 ? "Tài" : "Xỉu";
-                    const sessionId = sid;
-
-                    if (sessionId && !recentSessions.find(s => s.Phien === sessionId)) {
-                        recentSessions.unshift({
-                            Phien: sessionId,
-                            Xuc_xac_1: d1,
-                            Xuc_xac_2: d2,
-                            Xuc_xac_3: d3,
-                            Tong: total,
-                            Ket_qua: result
-                        });
-                        recentSessions.sort((a, b) => b.Phien - a.Phien);
-                        if (recentSessions.length > MAX_SESSIONS)
-                            recentSessions = recentSessions.slice(0, MAX_SESSIONS);
-                    }
+                    addSession(localSid, d1, d2, d3, total, result);
                 }
             } catch(e) {}
         });
@@ -109,5 +160,5 @@ for (let i = 0; i < WS_COUNT; i++) {
 }
 
 app.listen(PORT, '0.0.0.0', () => {
-    console.log(`${WS_COUNT} WS connections : port ${PORT}`);
+    console.log(`🚀 ${WS_COUNT} WS | 10 PHIÊN + DỰ ĐOÁN | PORT: ${PORT}`);
 });
